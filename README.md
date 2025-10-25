@@ -1,117 +1,119 @@
-# NFTs as Access Keys for Confidential Data Vaults
+# Decentralized Peer-Review System with Fully Homomorphic Encryption
 
-This project harnesses **Zama's Fully Homomorphic Encryption (FHE) technology** to revolutionize how sensitive data is managed and accessed. By allowing users to store their encrypted data in a decentralized vault, we provide a secure method of accessing and managing personal information through NFTs that serve as access keys. 
+This project is a Decentralized Peer-Review System designed to ensure fairness and integrity in the academic review process, powered by **Zama's Fully Homomorphic Encryption (FHE) technology**. By leveraging FHE, we can securely encrypt reviewers' identities and their feedback, enabling a truly double-blind review while protecting against conflicts of interest and academic bias.
 
-## The Challenge of Data Privacy
+## The Challenge in Academic Peer Review
 
-In today's digital landscape, individuals face an increasing risk of data breaches, identity theft, and unauthorized access to sensitive information. Despite advancements in data security, traditional methods often fall short, leaving users vulnerable when managing their personal information. As vast amounts of data are created daily, the need for an innovative solution that caters to individual privacy and security is more critical than ever.
+The academic peer review system is often fraught with challenges, such as bias and conflicts of interest. Traditional review systems compromise the anonymity of reviewers, which can lead to unfair evaluations and deter honest feedback. As the academic community seeks to enhance the quality and credibility of research, the need for a transparent and fair review process has never been more critical.
 
-## The FHE Solution
+## How FHE Addresses These Issues
 
-Our project introduces a groundbreaking solution by combining NFTs and Zama's FHE technology. By encrypting sensitive data using Zama's open-source libraries—like **Concrete** and **TFHE-rs**—users can securely store their information in a decentralized vault without the risk of exposure. Access to this vault is granted through NFTs, which represent the ownership and access rights to the encrypted data. This innovative approach not only enhances privacy but also empowers users by allowing them to trade or transfer their data access rights as assets, thus maintaining control over their personal information.
+Zama’s Fully Homomorphic Encryption technology offers a groundbreaking solution to these issues. By implementing FHE, we can encrypt sensitive data such as reviewers’ identities and their feedback, allowing computations to be performed on this encrypted data without ever exposing the underlying information. This is achieved using Zama's open-source libraries, including **Concrete** and **TFHE-rs**, ensuring the highest level of confidentiality in the review process.
 
-## Core Functionalities
+Real-time computations on homomorphically encrypted data enhance transparency while safeguarding reviewer anonymity, ensuring fairness in the evaluation process while effectively mitigating bias.
 
-The NFTs as Access Keys project includes several key features:
+## Core Features
 
-- **FHE Encrypted Data Storage**: Users can store sensitive data in a decentralized vault, ensuring that it remains confidential and secure.
-- **NFT Access Rights**: Ownership of an NFT signifies access to the associated encrypted data, enabling straightforward and secure access management.
-- **Homomorphic Verification for Holders**: Users can verify their access rights homomorphically without revealing the underlying data.
-- **Assetization and Tradeability**: The project allows NFT holders to trade their data access rights in a secure marketplace, promoting personal data sovereignty.
+- **Encrypted Reviewer Identity and Feedback:** Securely encrypts both the identities of reviewers and their evaluations, ensuring complete anonymity.
+- **Homomorphic Aggregation:** Final scores and evaluations are computed while the feedback remains encrypted, protecting the integrity of the review process.
+- **Enhanced Anonymity and Security:** Beyond encryption, the architecture promotes a secure environment for both reviewers and authors.
+- **Workflow Management:** Streamlined submission and review processes, ensuring efficient management of the peer review cycle.
 
 ## Technology Stack
 
-The development of this project relies on the following technologies:
+This project utilizes a robust technology stack, including:
+- **Zama’s FHE SDK (Concrete)** for confidential computing.
+- **Node.js** for runtime environment.
+- **Hardhat/Foundry** for smart contract development and management.
+- **Solidity** for Ethereum smart contracts.
 
-- **Zama SDK**: The foundation for confidential computing.
-- **Hardhat or Foundry**: Frameworks for building and testing Ethereum-based smart contracts.
-- **Node.js**: JavaScript runtime for server-side development.
-- **Solidity**: The programming language for developing smart contracts.
+## Directory Structure
 
-## Project Directory Structure
-
-Below is the structure of the project directory:
+Here's a quick overview of the project structure:
 
 ```
-Nft_Key_Fhe/
+/DecSci_Peer_Review_Fhe
 │
-├── contracts/
-│   └── Nft_Key_Fhe.sol
-├── scripts/
-│   └── deploy.js
-├── test/
-│   └── Nft_Key_Fhe.test.js
+├── contracts
+│   └── DeSci_Peer_Review.sol
+│
+├── src
+│   ├── index.js
+│   ├── utils.js
+│   └── reviews.js
+│
+├── tests
+│   └── review.test.js
+│
 ├── package.json
-├── hardhat.config.js
+└── README.md
 ```
 
 ## Installation Guide
 
-To get started with this project, follow these setup instructions:
+To set up the project on your local machine, follow these steps:
 
-1. Ensure you have **Node.js** installed on your machine. It can be downloaded from the official website.
-2. Navigate to the project's root directory using your terminal.
-3. Run the following command to install the required dependencies:
+1. **Download the Project:**
+   Ensure you download the project files to your local system.
 
+2. **Install Dependencies:**
+   Navigate to the project directory in your terminal and run:
    ```bash
    npm install
    ```
+   This command will automatically fetch Zama's FHE libraries and other necessary dependencies.
 
-   This will fetch the necessary libraries, including Zama's FHE libraries, ensuring that your environment is ready to build and run the project securely.
+3. **Node.js and Hardhat/Foundry Setup:**
+   Ensure you have **Node.js** and either **Hardhat** or **Foundry** installed. If they are not installed, you can download them from their respective official websites.
 
-## Build & Run Instructions
+## Building and Running the Project
 
-After setting up the project, use the following commands to compile and run the project:
+After properly setting up the project, you can compile, test, and run your contracts using the following commands:
 
-1. Compile the smart contracts:
+### Compile the Smart Contracts
+To compile the smart contracts, run:
+```bash
+npx hardhat compile
+```
 
-   ```bash
-   npx hardhat compile
-   ```
+### Test the Smart Contracts
+To execute unit tests and ensure everything is functioning as expected, run:
+```bash
+npx hardhat test
+```
 
-2. Run the tests to ensure everything is functioning correctly:
+### Deploy the Smart Contracts
+To deploy the smart contracts on your local blockchain (like Ganache), use:
+```bash
+npx hardhat run scripts/deploy.js --network localhost
+```
 
-   ```bash
-   npx hardhat test
-   ```
+## Example Code Snippet
 
-3. Deploy the smart contracts to the desired network:
+Here is a simple example of how to submit a review within the application:
 
-   ```bash
-   npx hardhat run scripts/deploy.js --network <network_name>
-   ```
+```javascript
+const { ethers } = require("hardhat");
 
-   Replace `<network_name>` with the appropriate Ethereum network you wish to deploy to.
+async function submitReview(reviewContent, reviewerId) {
+    const ReviewContract = await ethers.getContractFactory("DeSci_Peer_Review");
+    const reviewContract = await ReviewContract.deploy();
+    await reviewContract.deployed();
 
-### Example Code Snippet
-
-Here’s a small code snippet demonstrating how to mint an NFT that grants access to encrypted data:
-
-```solidity
-pragma solidity ^0.8.0;
-
-import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
-
-contract Nft_Key_Fhe is ERC721 {
-    mapping(uint256 => string) private _dataHashes;
-
-    constructor() ERC721("NFT Key FHE", "NFTKFHE") {}
-
-    function mintNFT(address to, uint256 tokenId, string memory dataHash) public {
-        _mint(to, tokenId);
-        _dataHashes[tokenId] = dataHash; // Storing the hash of the encrypted data
-    }
-
-    function getDataHash(uint256 tokenId) public view returns (string memory) {
-        return _dataHashes[tokenId];
-    }
+    const encryptedReview = encryptReview(reviewContent); // Assume this function encrypts the content using FHE
+    await reviewContract.submitReview(encryptedReview, reviewerId);
+    console.log("Review submitted and securely encrypted!");
 }
 ```
 
-This contract enables the creation of NFTs that represent access to encrypted data, providing a unique solution for personal data management.
+This code illustrates the submission of a review where the review content is encrypted before being sent to the blockchain.
 
 ## Acknowledgements
 
 ### Powered by Zama
 
-We extend our heartfelt gratitude to the Zama team for their pioneering work in Fully Homomorphic Encryption and their open-source tools that facilitate the development of confidential blockchain applications. Your contributions have made it possible for us to create a project that prioritizes user privacy and security in the digital age.
+A heartfelt thank you to the team at Zama for their pioneering work and commitment to open-source tools that empower the creation of confidential blockchain applications. Your dedication to advancing the field of cryptography is the backbone of this project and many others.
+
+---
+
+This README aims to provide a comprehensive overview of the Decentralized Peer-Review System, illustrating the potential and utility of combining academic integrity with cutting-edge technology. For developers looking to contribute or enhance this project, your engagement is invaluable!

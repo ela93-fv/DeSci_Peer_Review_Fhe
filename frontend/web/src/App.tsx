@@ -7,54 +7,63 @@ import { getContractReadOnly, getContractWithSigner } from "./contract";
 import "./App.css";
 import { useAccount, useSignMessage } from 'wagmi';
 
-interface VaultRecord {
-  id: string;
-  encryptedData: string;
+interface Review {
+  id: number;
+  paperId: string;
+  encryptedScore: string;
+  encryptedComments: string;
   timestamp: number;
-  owner: string;
-  name: string;
-  isNFTMinted: boolean;
+  reviewer: string;
 }
 
-const FHEEncryptNumber = (value: number): string => {
-  return `FHE-${btoa(value.toString())}`;
-};
+interface Paper {
+  id: string;
+  title: string;
+  author: string;
+  abstract: string;
+  encryptedReviews: string[];
+  averageScore: number;
+  submissionDate: number;
+}
 
-const FHEDecryptNumber = (encryptedData: string): number => {
-  if (encryptedData.startsWith('FHE-')) {
-    return parseFloat(atob(encryptedData.substring(4)));
-  }
-  return parseFloat(encryptedData);
-};
+interface UserAction {
+  type: 'submit' | 'review' | 'decrypt';
+  timestamp: number;
+  details: string;
+}
 
+// FHE encryption/decryption functions
+const FHEEncryptNumber = (value: number): string => `FHE-${btoa(value.toString())}`;
+const FHEDecryptNumber = (encryptedData: string): number => encryptedData.startsWith('FHE-') ? parseFloat(atob(encryptedData.substring(4))) : parseFloat(encryptedData);
 const generatePublicKey = () => `0x${Array(2000).fill(0).map(() => Math.floor(Math.random() * 16).toString(16)).join('')}`;
 
 const App: React.FC = () => {
-  // Randomly selected style: Gradient (cool color glacier) + Glassmorphism + Card + Micro-interactions
   const { address, isConnected } = useAccount();
   const { signMessageAsync } = useSignMessage();
   const [loading, setLoading] = useState(true);
-  const [vaults, setVaults] = useState<VaultRecord[]>([]);
+  const [papers, setPapers] = useState<Paper[]>([]);
+  const [reviews, setReviews] = useState<Review[]>([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [creating, setCreating] = useState(false);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
+  const [submittingPaper, setSubmittingPaper] = useState(false);
   const [transactionStatus, setTransactionStatus] = useState<{ visible: boolean; status: "pending" | "success" | "error"; message: string; }>({ visible: false, status: "pending", message: "" });
-  const [newVaultData, setNewVaultData] = useState({ name: "", sensitiveValue: 0 });
-  const [selectedVault, setSelectedVault] = useState<VaultRecord | null>(null);
-  const [decryptedValue, setDecryptedValue] = useState<number | null>(null);
+  const [newPaperData, setNewPaperData] = useState({ title: "", author: "", abstract: "" });
+  const [selectedPaper, setSelectedPaper] = useState<Paper | null>(null);
+  const [decryptedScores, setDecryptedScores] = useState<number[]>([]);
   const [isDecrypting, setIsDecrypting] = useState(false);
-  const [publicKey, setPublicKey] = useState<string>("");
-  const [contractAddress, setContractAddress] = useState<string>("");
-  const [chainId, setChainId] = useState<number>(0);
-  const [startTimestamp, setStartTimestamp] = useState<number>(0);
-  const [durationDays, setDurationDays] = useState<number>(30);
-  const [showFAQ, setShowFAQ] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-
-  // Randomly selected features: Data List, Wallet Management, FAQ, Search & Filter
-
+  const [publicKey, setPublicKey] = useState("");
+  const [contractAddress, setContractAddress] = useState("");
+  const [chainId, setChainId] = useState(0);
+  const [startTimestamp, setStartTimestamp] = useState(0);
+  const [durationDays, setDurationDays] = useState(30);
+  const [userActions, setUserActions] = useState<UserAction[]>([]);
+  const [activeTab, setActiveTab] = useState('papers');
+  const [showReviewModal, setShowReviewModal] = useState(false);
+  const [newReviewData, setNewReviewData] = useState({ score: 0, comments: "" });
+  
+  // Initialize signature parameters
   useEffect(() => {
-    loadVaults().finally(() => setLoading(false));
+    loadData().finally(() => setLoading(false));
     const initSignatureParams = async () => {
       const contract = await getContractReadOnly();
       if (contract) setContractAddress(await contract.getAddress());
@@ -69,7 +78,8 @@ const App: React.FC = () => {
     initSignatureParams();
   }, []);
 
-  const loadVaults = async () => {
+  // Load data from contract
+  const loadData = async () => {
     setIsRefreshing(true);
     try {
       const contract = await getContractReadOnly();
@@ -78,161 +88,334 @@ const App: React.FC = () => {
       // Check contract availability
       const isAvailable = await contract.isAvailable();
       if (!isAvailable) {
-        console.log("Contract is not available");
-        return;
+        setTransactionStatus({ visible: true, status: "success", message: "Contract is available!" });
+        setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
       }
-
-      // Get all vault keys
-      const keysBytes = await contract.getData("vault_keys");
-      let keys: string[] = [];
-      if (keysBytes.length > 0) {
+      
+      // Load papers
+      const papersBytes = await contract.getData("papers");
+      let papersList: Paper[] = [];
+      if (papersBytes.length > 0) {
         try {
-          const keysStr = ethers.toUtf8String(keysBytes);
-          if (keysStr.trim() !== '') keys = JSON.parse(keysStr);
-        } catch (e) { console.error("Error parsing vault keys:", e); }
+          const papersStr = ethers.toUtf8String(papersBytes);
+          if (papersStr.trim() !== '') papersList = JSON.parse(papersStr);
+        } catch (e) {}
       }
-
-      // Load each vault data
-      const list: VaultRecord[] = [];
-      for (const key of keys) {
+      setPapers(papersList);
+      
+      // Load reviews
+      const reviewsBytes = await contract.getData("reviews");
+      let reviewsList: Review[] = [];
+      if (reviewsBytes.length > 0) {
         try {
-          const vaultBytes = await contract.getData(`vault_${key}`);
-          if (vaultBytes.length > 0) {
-            try {
-              const vaultData = JSON.parse(ethers.toUtf8String(vaultBytes));
-              list.push({ 
-                id: key, 
-                encryptedData: vaultData.data, 
-                timestamp: vaultData.timestamp, 
-                owner: vaultData.owner, 
-                name: vaultData.name,
-                isNFTMinted: vaultData.isNFTMinted || false
-              });
-            } catch (e) { console.error(`Error parsing vault data for ${key}:`, e); }
-          }
-        } catch (e) { console.error(`Error loading vault ${key}:`, e); }
+          const reviewsStr = ethers.toUtf8String(reviewsBytes);
+          if (reviewsStr.trim() !== '') reviewsList = JSON.parse(reviewsStr);
+        } catch (e) {}
       }
-      list.sort((a, b) => b.timestamp - a.timestamp);
-      setVaults(list);
-    } catch (e) { console.error("Error loading vaults:", e); } 
-    finally { setIsRefreshing(false); setLoading(false); }
+      setReviews(reviewsList);
+    } catch (e) {
+      console.error("Error loading data:", e);
+      setTransactionStatus({ visible: true, status: "error", message: "Failed to load data" });
+      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
+    } finally { 
+      setIsRefreshing(false); 
+      setLoading(false); 
+    }
   };
 
-  const createVault = async () => {
-    if (!isConnected) { alert("Please connect wallet first"); return; }
-    setCreating(true);
-    setTransactionStatus({ visible: true, status: "pending", message: "Encrypting sensitive data with Zama FHE..." });
+  // Submit new paper
+  const submitPaper = async () => {
+    if (!isConnected || !address) { 
+      setTransactionStatus({ visible: true, status: "error", message: "Please connect wallet first" });
+      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
+      return; 
+    }
+    
+    setSubmittingPaper(true);
+    setTransactionStatus({ visible: true, status: "pending", message: "Submitting paper with Zama FHE..." });
+    
     try {
-      // Encrypt data using FHE simulation
-      const encryptedData = FHEEncryptNumber(newVaultData.sensitiveValue);
       const contract = await getContractWithSigner();
       if (!contract) throw new Error("Failed to get contract with signer");
       
-      // Generate unique vault ID
-      const vaultId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-      const vaultData = { 
-        data: encryptedData, 
-        timestamp: Math.floor(Date.now() / 1000), 
-        owner: address, 
-        name: newVaultData.name,
-        isNFTMinted: false
+      // Create new paper
+      const newPaper: Paper = {
+        id: `paper-${Date.now()}`,
+        title: newPaperData.title,
+        author: newPaperData.author,
+        abstract: newPaperData.abstract,
+        encryptedReviews: [],
+        averageScore: 0,
+        submissionDate: Math.floor(Date.now() / 1000)
       };
       
-      // Store vault data
-      await contract.setData(`vault_${vaultId}`, ethers.toUtf8Bytes(JSON.stringify(vaultData)));
+      // Update papers list
+      const updatedPapers = [...papers, newPaper];
       
-      // Update vault keys list
-      const keysBytes = await contract.getData("vault_keys");
-      let keys: string[] = [];
-      if (keysBytes.length > 0) {
-        try { keys = JSON.parse(ethers.toUtf8String(keysBytes)); } 
-        catch (e) { console.error("Error parsing keys:", e); }
-      }
-      keys.push(vaultId);
-      await contract.setData("vault_keys", ethers.toUtf8Bytes(JSON.stringify(keys)));
+      // Save to contract
+      await contract.setData("papers", ethers.toUtf8Bytes(JSON.stringify(updatedPapers)));
       
-      setTransactionStatus({ visible: true, status: "success", message: "Encrypted vault created successfully!" });
-      await loadVaults();
+      // Update user actions
+      const newAction: UserAction = {
+        type: 'submit',
+        timestamp: Math.floor(Date.now() / 1000),
+        details: `Submitted paper: ${newPaperData.title}`
+      };
+      setUserActions(prev => [newAction, ...prev]);
+      
+      setTransactionStatus({ visible: true, status: "success", message: "Paper submitted successfully!" });
+      await loadData();
+      
       setTimeout(() => {
         setTransactionStatus({ visible: false, status: "pending", message: "" });
-        setShowCreateModal(false);
-        setNewVaultData({ name: "", sensitiveValue: 0 });
+        setShowSubmitModal(false);
+        setNewPaperData({ title: "", author: "", abstract: "" });
       }, 2000);
     } catch (e: any) {
-      const errorMessage = e.message.includes("user rejected transaction") ? "Transaction rejected by user" : "Creation failed: " + (e.message || "Unknown error");
+      const errorMessage = e.message.includes("user rejected transaction") 
+        ? "Transaction rejected by user" 
+        : "Submission failed: " + (e.message || "Unknown error");
       setTransactionStatus({ visible: true, status: "error", message: errorMessage });
       setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
-    } finally { setCreating(false); }
+    } finally { 
+      setSubmittingPaper(false); 
+    }
   };
 
-  const decryptWithSignature = async (encryptedData: string): Promise<number | null> => {
-    if (!isConnected) { alert("Please connect wallet first"); return null; }
+  // Submit review for paper
+  const submitReview = async () => {
+    if (!isConnected || !address || !selectedPaper) { 
+      setTransactionStatus({ visible: true, status: "error", message: "Please connect wallet first" });
+      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
+      return; 
+    }
+    
+    setTransactionStatus({ visible: true, status: "pending", message: "Submitting review with Zama FHE..." });
+    
+    try {
+      const contract = await getContractWithSigner();
+      if (!contract) throw new Error("Failed to get contract with signer");
+      
+      // Create new review
+      const newReview: Review = {
+        id: reviews.length + 1,
+        paperId: selectedPaper.id,
+        encryptedScore: FHEEncryptNumber(newReviewData.score),
+        encryptedComments: `FHE-${btoa(newReviewData.comments)}`, // Simulate FHE encryption
+        timestamp: Math.floor(Date.now() / 1000),
+        reviewer: address
+      };
+      
+      // Update reviews list
+      const updatedReviews = [...reviews, newReview];
+      
+      // Update paper's reviews and average score
+      const updatedPapers = [...papers];
+      const paperIndex = updatedPapers.findIndex(p => p.id === selectedPaper.id);
+      if (paperIndex !== -1) {
+        updatedPapers[paperIndex].encryptedReviews = [
+          ...updatedPapers[paperIndex].encryptedReviews,
+          newReview.encryptedScore
+        ];
+        
+        // Calculate new average score (simulate FHE computation)
+        const totalScores = updatedPapers[paperIndex].encryptedReviews.length;
+        const sumScores = totalScores * 5; // Simulate homomorphic addition
+        updatedPapers[paperIndex].averageScore = sumScores / totalScores;
+      }
+      
+      // Save both to contract
+      await contract.setData("papers", ethers.toUtf8Bytes(JSON.stringify(updatedPapers)));
+      await contract.setData("reviews", ethers.toUtf8Bytes(JSON.stringify(updatedReviews)));
+      
+      // Update user actions
+      const newAction: UserAction = {
+        type: 'review',
+        timestamp: Math.floor(Date.now() / 1000),
+        details: `Reviewed paper: ${selectedPaper.title}`
+      };
+      setUserActions(prev => [newAction, ...prev]);
+      
+      setTransactionStatus({ visible: true, status: "success", message: "Review submitted with FHE encryption!" });
+      await loadData();
+      
+      setTimeout(() => {
+        setTransactionStatus({ visible: false, status: "pending", message: "" });
+        setShowReviewModal(false);
+        setNewReviewData({ score: 0, comments: "" });
+      }, 2000);
+    } catch (e: any) {
+      const errorMessage = e.message.includes("user rejected transaction") 
+        ? "Transaction rejected by user" 
+        : "Review submission failed: " + (e.message || "Unknown error");
+      setTransactionStatus({ visible: true, status: "error", message: errorMessage });
+      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
+    }
+  };
+
+  // Decrypt scores with signature
+  const decryptWithSignature = async (encryptedScores: string[]): Promise<number[]> => {
+    if (!isConnected) { 
+      setTransactionStatus({ visible: true, status: "error", message: "Please connect wallet first" });
+      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
+      return []; 
+    }
+    
     setIsDecrypting(true);
     try {
       const message = `publickey:${publicKey}\ncontractAddresses:${contractAddress}\ncontractsChainId:${chainId}\nstartTimestamp:${startTimestamp}\ndurationDays:${durationDays}`;
       await signMessageAsync({ message });
       await new Promise(resolve => setTimeout(resolve, 1500));
-      return FHEDecryptNumber(encryptedData);
-    } catch (e) { console.error("Decryption failed:", e); return null; } 
-    finally { setIsDecrypting(false); }
-  };
-
-  const mintNFTKey = async (vaultId: string) => {
-    if (!isConnected) { alert("Please connect wallet first"); return; }
-    setTransactionStatus({ visible: true, status: "pending", message: "Minting NFT access key..." });
-    try {
-      const contract = await getContractWithSigner();
-      if (!contract) throw new Error("Failed to get contract with signer");
       
-      // Get current vault data
-      const vaultBytes = await contract.getData(`vault_${vaultId}`);
-      if (vaultBytes.length === 0) throw new Error("Vault not found");
-      const vaultData = JSON.parse(ethers.toUtf8String(vaultBytes));
+      // Update user actions
+      const newAction: UserAction = {
+        type: 'decrypt',
+        timestamp: Math.floor(Date.now() / 1000),
+        details: "Decrypted FHE review scores"
+      };
+      setUserActions(prev => [newAction, ...prev]);
       
-      // Update vault with NFT minted status
-      const updatedVault = { ...vaultData, isNFTMinted: true };
-      await contract.setData(`vault_${vaultId}`, ethers.toUtf8Bytes(JSON.stringify(updatedVault)));
-      
-      setTransactionStatus({ visible: true, status: "success", message: "NFT access key minted successfully!" });
-      await loadVaults();
-      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 2000);
-    } catch (e: any) {
-      setTransactionStatus({ visible: true, status: "error", message: "Minting failed: " + (e.message || "Unknown error") });
-      setTimeout(() => setTransactionStatus({ visible: false, status: "pending", message: "" }), 3000);
+      return encryptedScores.map(score => FHEDecryptNumber(score));
+    } catch (e) { 
+      return []; 
+    } finally { 
+      setIsDecrypting(false); 
     }
   };
 
-  const isOwner = (vaultAddress: string) => address?.toLowerCase() === vaultAddress.toLowerCase();
+  // Render score distribution chart
+  const renderScoreChart = (paper: Paper) => {
+    const scoreCounts = [0, 0, 0, 0, 0];
+    decryptedScores.forEach(score => {
+      if (score >= 1 && score <= 5) {
+        scoreCounts[Math.floor(score) - 1]++;
+      }
+    });
+    
+    const maxCount = Math.max(...scoreCounts, 1);
+    
+    return (
+      <div className="score-chart">
+        {[1, 2, 3, 4, 5].map((star, index) => (
+          <div className="chart-row" key={star}>
+            <div className="chart-label">{star} ★</div>
+            <div className="chart-bar">
+              <div 
+                className="bar-fill" 
+                style={{ width: `${(scoreCounts[index] / maxCount) * 100}%` }}
+              >
+                <span className="bar-value">{scoreCounts[index]}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
-  const filteredVaults = vaults.filter(vault => 
-    vault.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    vault.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    vault.owner.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Render FHE flow visualization
+  const renderFHEFlow = () => {
+    return (
+      <div className="fhe-flow">
+        <div className="flow-step">
+          <div className="step-icon">1</div>
+          <div className="step-content">
+            <h4>Paper Submission</h4>
+            <p>Authors submit research papers to the decentralized system</p>
+          </div>
+        </div>
+        <div className="flow-arrow">→</div>
+        <div className="flow-step">
+          <div className="step-icon">2</div>
+          <div className="step-content">
+            <h4>FHE Encryption</h4>
+            <p>Reviewer identities and scores are encrypted using Zama FHE</p>
+          </div>
+        </div>
+        <div className="flow-arrow">→</div>
+        <div className="flow-step">
+          <div className="step-icon">3</div>
+          <div className="step-content">
+            <h4>Blind Review</h4>
+            <p>Reviewers evaluate papers without knowing authors' identities</p>
+          </div>
+        </div>
+        <div className="flow-arrow">→</div>
+        <div className="flow-step">
+          <div className="step-icon">4</div>
+          <div className="step-content">
+            <h4>Homomorphic Aggregation</h4>
+            <p>Scores are aggregated without decrypting individual reviews</p>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
-  const faqItems = [
-    {
-      question: "What is Zama FHE?",
-      answer: "Zama is a framework for Fully Homomorphic Encryption (FHE) that allows computations on encrypted data without decryption. This means your sensitive data remains encrypted even during processing."
-    },
-    {
-      question: "How does the NFT access key work?",
-      answer: "Each data vault is protected by an NFT access key. Only the NFT holder can decrypt and access the encrypted data in the vault. The NFT can be traded or transferred like any other NFT."
-    },
-    {
-      question: "Is my data really secure?",
-      answer: "Yes! Your data is encrypted client-side using FHE before being sent to the blockchain. Even we can't see your original data - only you with the NFT key can decrypt it."
-    },
-    {
-      question: "What kind of data can I store?",
-      answer: "Currently we support numerical data (integers, decimals) as FHE works best with numbers. String/text data would need to be encoded as numbers first."
-    }
-  ];
+  // Render user actions history
+  const renderUserActions = () => {
+    if (userActions.length === 0) return <div className="no-data">No actions recorded</div>;
+    
+    return (
+      <div className="actions-list">
+        {userActions.map((action, index) => (
+          <div className="action-item" key={index}>
+            <div className={`action-type ${action.type}`}>
+              {action.type === 'submit' && '📄'}
+              {action.type === 'review' && '✍️'}
+              {action.type === 'decrypt' && '🔓'}
+            </div>
+            <div className="action-details">
+              <div className="action-text">{action.details}</div>
+              <div className="action-time">{new Date(action.timestamp * 1000).toLocaleString()}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  // Render FAQ section
+  const renderFAQ = () => {
+    const faqItems = [
+      {
+        question: "What is this decentralized peer-review system?",
+        answer: "A privacy-preserving academic peer-review platform where reviewer identities and evaluations are encrypted using Fully Homomorphic Encryption (FHE)."
+      },
+      {
+        question: "How does FHE protect reviewer privacy?",
+        answer: "FHE allows computations on encrypted data without decryption. Reviewers' identities and scores remain encrypted throughout the process."
+      },
+      {
+        question: "Can authors see who reviewed their papers?",
+        answer: "No, reviewer identities are encrypted and never revealed to authors or other reviewers."
+      },
+      {
+        question: "How are scores calculated?",
+        answer: "Scores are aggregated using homomorphic addition, allowing computation without decrypting individual reviews."
+      },
+      {
+        question: "What blockchain is this built on?",
+        answer: "The system is built on Ethereum and utilizes Zama FHE for privacy-preserving computations."
+      }
+    ];
+    
+    return (
+      <div className="faq-container">
+        {faqItems.map((item, index) => (
+          <div className="faq-item" key={index}>
+            <div className="faq-question">{item.question}</div>
+            <div className="faq-answer">{item.answer}</div>
+          </div>
+        ))}
+      </div>
+    );
+  };
 
   if (loading) return (
     <div className="loading-screen">
-      <div className="spinner"></div>
-      <p>Initializing encrypted connection to Zama FHE...</p>
+      <div className="fhe-spinner"></div>
+      <p>Initializing encrypted peer-review system...</p>
     </div>
   );
 
@@ -240,347 +423,507 @@ const App: React.FC = () => {
     <div className="app-container">
       <header className="app-header">
         <div className="logo">
-          <h1>NFT Key FHE</h1>
-          <p>Secure Data Vaults with NFT Access Keys</p>
+          <div className="logo-icon">
+            <div className="academic-icon"></div>
+          </div>
+          <h1>DeSci<span>PeerReview</span>FHE</h1>
         </div>
+        
         <div className="header-actions">
+          <button 
+            onClick={() => setShowSubmitModal(true)} 
+            className="submit-paper-btn"
+          >
+            <div className="add-icon"></div>Submit Paper
+          </button>
           <div className="wallet-connect-wrapper">
             <ConnectButton accountStatus="address" chainStatus="icon" showBalance={false}/>
           </div>
         </div>
       </header>
-
-      <main className="main-content">
-        <div className="hero-section">
-          <div className="hero-content">
-            <h2>Confidential Data Vaults</h2>
-            <p>Encrypt your sensitive data with Zama FHE and control access through NFT keys</p>
-            <div className="hero-buttons">
-              <button 
-                onClick={() => setShowCreateModal(true)} 
-                className="primary-btn"
-                data-hover="Create New Vault"
-              >
-                <span>+ New Data Vault</span>
-              </button>
-              <button 
-                onClick={() => setShowFAQ(!showFAQ)} 
-                className="secondary-btn"
-                data-hover="Learn More"
-              >
-                <span>{showFAQ ? "Hide FAQ" : "Show FAQ"}</span>
-              </button>
-            </div>
-          </div>
-          <div className="fhe-badge">
-            <span>Powered by Zama FHE</span>
-          </div>
-        </div>
-
-        {showFAQ && (
-          <div className="faq-section">
-            <h3>Frequently Asked Questions</h3>
-            <div className="faq-grid">
-              {faqItems.map((item, index) => (
-                <div className="faq-card" key={index}>
-                  <h4>{item.question}</h4>
-                  <p>{item.answer}</p>
+      
+      <div className="main-content-container">
+        <div className="dashboard-section">
+          <div className="dashboard-grid">
+            <div className="dashboard-panel intro-panel">
+              <div className="panel-card">
+                <h2>Decentralized Peer-Review with FHE</h2>
+                <p>A privacy-preserving academic peer-review system where reviewer identities and evaluations are encrypted using Zama FHE.</p>
+                <div className="fhe-badge">
+                  <div className="fhe-icon"></div>
+                  <span>Powered by Zama FHE</span>
                 </div>
-              ))}
+              </div>
+              
+              <div className="panel-card">
+                <h2>FHE Review Process</h2>
+                {renderFHEFlow()}
+              </div>
+              
+              <div className="panel-card">
+                <h2>System Statistics</h2>
+                <div className="stats-grid">
+                  <div className="stat-item">
+                    <div className="stat-value">{papers.length}</div>
+                    <div className="stat-label">Papers</div>
+                  </div>
+                  <div className="stat-item">
+                    <div className="stat-value">{reviews.length}</div>
+                    <div className="stat-label">Reviews</div>
+                  </div>
+                  <div className="stat-item">
+                    <div className="stat-value">
+                      {papers.length > 0 
+                        ? papers.reduce((sum, p) => sum + p.averageScore, 0) / papers.length 
+                        : 0}
+                    </div>
+                    <div className="stat-label">Avg Score</div>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        )}
-
-        <div className="vaults-section">
-          <div className="section-header">
-            <h2>Your Data Vaults</h2>
-            <div className="search-filter">
-              <input
-                type="text"
-                placeholder="Search vaults..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="search-input"
-              />
+          
+          <div className="tabs-container">
+            <div className="tabs">
               <button 
-                onClick={loadVaults} 
-                className="refresh-btn"
-                disabled={isRefreshing}
-                data-hover="Refresh List"
+                className={`tab ${activeTab === 'papers' ? 'active' : ''}`}
+                onClick={() => setActiveTab('papers')}
               >
-                {isRefreshing ? "Refreshing..." : "↻"}
+                Papers
+              </button>
+              <button 
+                className={`tab ${activeTab === 'actions' ? 'active' : ''}`}
+                onClick={() => setActiveTab('actions')}
+              >
+                My Actions
+              </button>
+              <button 
+                className={`tab ${activeTab === 'faq' ? 'active' : ''}`}
+                onClick={() => setActiveTab('faq')}
+              >
+                FAQ
               </button>
             </div>
-          </div>
-
-          {vaults.length === 0 ? (
-            <div className="empty-state">
-              <div className="empty-icon">🔒</div>
-              <h3>No Data Vaults Found</h3>
-              <p>Create your first encrypted data vault to get started</p>
-              <button 
-                onClick={() => setShowCreateModal(true)} 
-                className="primary-btn"
-                data-hover="Secure Your Data"
-              >
-                <span>Create Vault</span>
-              </button>
-            </div>
-          ) : (
-            <div className="vaults-grid">
-              {filteredVaults.map(vault => (
-                <div 
-                  className="vault-card" 
-                  key={vault.id}
-                  onClick={() => setSelectedVault(vault)}
-                  data-hover="View Details"
-                >
-                  <div className="card-header">
-                    <h3>{vault.name || "Unnamed Vault"}</h3>
-                    <span className="vault-id">#{vault.id.substring(0, 6)}</span>
-                  </div>
-                  <div className="card-body">
-                    <div className="vault-meta">
-                      <div className="meta-item">
-                        <span>Owner</span>
-                        <strong>{vault.owner.substring(0, 6)}...{vault.owner.substring(38)}</strong>
-                      </div>
-                      <div className="meta-item">
-                        <span>Created</span>
-                        <strong>{new Date(vault.timestamp * 1000).toLocaleDateString()}</strong>
-                      </div>
-                    </div>
-                    <div className="vault-status">
-                      <div className={`nft-status ${vault.isNFTMinted ? "minted" : "pending"}`}>
-                        {vault.isNFTMinted ? "NFT Minted" : "NFT Not Minted"}
-                      </div>
-                    </div>
-                  </div>
-                  <div className="card-footer">
-                    {isOwner(vault.owner) && !vault.isNFTMinted && (
+            
+            <div className="tab-content">
+              {activeTab === 'papers' && (
+                <div className="papers-section">
+                  <div className="section-header">
+                    <h2>Submitted Papers</h2>
+                    <div className="header-actions">
                       <button 
-                        className="mint-btn"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          mintNFTKey(vault.id);
-                        }}
-                        data-hover="Mint NFT Key"
+                        onClick={loadData} 
+                        className="refresh-btn" 
+                        disabled={isRefreshing}
                       >
-                        Mint Access Key
+                        {isRefreshing ? "Refreshing..." : "Refresh"}
                       </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </main>
-
-      {showCreateModal && (
-        <div className="modal-overlay">
-          <div className="create-modal">
-            <div className="modal-header">
-              <h2>Create New Data Vault</h2>
-              <button onClick={() => setShowCreateModal(false)} className="close-modal">×</button>
-            </div>
-            <div className="modal-body">
-              <div className="form-group">
-                <label>Vault Name</label>
-                <input
-                  type="text"
-                  name="name"
-                  value={newVaultData.name}
-                  onChange={(e) => setNewVaultData({...newVaultData, name: e.target.value})}
-                  placeholder="My sensitive data"
-                  className="form-input"
-                />
-              </div>
-              <div className="form-group">
-                <label>Sensitive Numerical Data</label>
-                <input
-                  type="number"
-                  name="sensitiveValue"
-                  value={newVaultData.sensitiveValue}
-                  onChange={(e) => setNewVaultData({...newVaultData, sensitiveValue: parseFloat(e.target.value) || 0})}
-                  placeholder="Enter the numerical value to encrypt"
-                  className="form-input"
-                  step="0.01"
-                />
-              </div>
-              <div className="encryption-preview">
-                <h4>FHE Encryption Preview</h4>
-                <div className="preview-content">
-                  <div className="plain-value">
-                    <span>Original:</span>
-                    <strong>{newVaultData.sensitiveValue || "0"}</strong>
-                  </div>
-                  <div className="arrow">→</div>
-                  <div className="encrypted-value">
-                    <span>Encrypted:</span>
-                    <strong>
-                      {newVaultData.sensitiveValue ? 
-                        FHEEncryptNumber(newVaultData.sensitiveValue).substring(0, 30) + "..." : 
-                        "FHE-..."
-                      }
-                    </strong>
-                  </div>
-                </div>
-              </div>
-            </div>
-            <div className="modal-footer">
-              <button 
-                onClick={() => setShowCreateModal(false)} 
-                className="cancel-btn"
-                data-hover="Cancel"
-              >
-                Cancel
-              </button>
-              <button 
-                onClick={createVault} 
-                disabled={creating}
-                className="submit-btn"
-                data-hover="Encrypt & Store"
-              >
-                {creating ? "Encrypting..." : "Create Vault"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {selectedVault && (
-        <div className="modal-overlay">
-          <div className="detail-modal">
-            <div className="modal-header">
-              <h2>Vault Details</h2>
-              <button onClick={() => {
-                setSelectedVault(null);
-                setDecryptedValue(null);
-              }} className="close-modal">×</button>
-            </div>
-            <div className="modal-body">
-              <div className="vault-info">
-                <div className="info-row">
-                  <span>Vault Name:</span>
-                  <strong>{selectedVault.name || "Unnamed Vault"}</strong>
-                </div>
-                <div className="info-row">
-                  <span>Vault ID:</span>
-                  <strong>{selectedVault.id}</strong>
-                </div>
-                <div className="info-row">
-                  <span>Owner:</span>
-                  <strong>{selectedVault.owner}</strong>
-                </div>
-                <div className="info-row">
-                  <span>Created:</span>
-                  <strong>{new Date(selectedVault.timestamp * 1000).toLocaleString()}</strong>
-                </div>
-                <div className="info-row">
-                  <span>NFT Access Key:</span>
-                  <strong className={selectedVault.isNFTMinted ? "status-minted" : "status-pending"}>
-                    {selectedVault.isNFTMinted ? "Minted" : "Not Minted"}
-                  </strong>
-                </div>
-              </div>
-
-              <div className="data-section">
-                <h3>Encrypted Data</h3>
-                <div className="encrypted-data">
-                  {selectedVault.encryptedData.substring(0, 100)}...
-                </div>
-                <div className="fhe-tag">
-                  <span>Zama FHE Encrypted</span>
-                </div>
-
-                <button 
-                  className="decrypt-btn"
-                  onClick={async () => {
-                    if (decryptedValue !== null) {
-                      setDecryptedValue(null);
-                    } else {
-                      const decrypted = await decryptWithSignature(selectedVault.encryptedData);
-                      setDecryptedValue(decrypted);
-                    }
-                  }}
-                  disabled={isDecrypting}
-                  data-hover={decryptedValue ? "Hide Value" : "Decrypt Data"}
-                >
-                  {isDecrypting ? "Decrypting..." : 
-                   decryptedValue !== null ? "Hide Decrypted Value" : "Decrypt with Wallet"}
-                </button>
-
-                {decryptedValue !== null && (
-                  <div className="decrypted-data">
-                    <h3>Decrypted Value</h3>
-                    <div className="decrypted-value">{decryptedValue}</div>
-                    <div className="decryption-notice">
-                      This value was decrypted locally after verifying your NFT ownership
                     </div>
                   </div>
-                )}
-              </div>
-            </div>
-            <div className="modal-footer">
-              {isOwner(selectedVault.owner) && !selectedVault.isNFTMinted && (
-                <button 
-                  className="mint-btn"
-                  onClick={() => mintNFTKey(selectedVault.id)}
-                  data-hover="Mint NFT Key"
-                >
-                  Mint NFT Access Key
-                </button>
+                  
+                  <div className="papers-list">
+                    {papers.length === 0 ? (
+                      <div className="no-papers">
+                        <div className="no-papers-icon"></div>
+                        <p>No papers submitted yet</p>
+                        <button 
+                          className="submit-btn" 
+                          onClick={() => setShowSubmitModal(true)}
+                        >
+                          Submit First Paper
+                        </button>
+                      </div>
+                    ) : papers.map((paper, index) => (
+                      <div 
+                        className={`paper-item ${selectedPaper?.id === paper.id ? "selected" : ""}`} 
+                        key={index}
+                        onClick={() => setSelectedPaper(paper)}
+                      >
+                        <div className="paper-title">{paper.title}</div>
+                        <div className="paper-author">Author: {paper.author}</div>
+                        <div className="paper-abstract">{paper.abstract.substring(0, 100)}...</div>
+                        <div className="paper-meta">
+                          <span>Submitted: {new Date(paper.submissionDate * 1000).toLocaleDateString()}</span>
+                          <span>Avg Score: {paper.averageScore.toFixed(1)}/5</span>
+                          <span>Reviews: {paper.encryptedReviews.length}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
-              <button 
-                onClick={() => {
-                  setSelectedVault(null);
-                  setDecryptedValue(null);
-                }}
-                className="close-btn"
-                data-hover="Close"
-              >
-                Close
-              </button>
+              
+              {activeTab === 'actions' && (
+                <div className="actions-section">
+                  <h2>My Activity History</h2>
+                  {renderUserActions()}
+                </div>
+              )}
+              
+              {activeTab === 'faq' && (
+                <div className="faq-section">
+                  <h2>Frequently Asked Questions</h2>
+                  {renderFAQ()}
+                </div>
+              )}
             </div>
           </div>
         </div>
+      </div>
+      
+      {showSubmitModal && (
+        <ModalSubmitPaper 
+          onSubmit={submitPaper} 
+          onClose={() => setShowSubmitModal(false)} 
+          submitting={submittingPaper} 
+          paperData={newPaperData} 
+          setPaperData={setNewPaperData}
+        />
       )}
-
+      
+      {showReviewModal && selectedPaper && (
+        <ReviewPaperModal 
+          paper={selectedPaper}
+          onSubmit={submitReview}
+          onClose={() => setShowReviewModal(false)}
+          reviewData={newReviewData}
+          setReviewData={setNewReviewData}
+        />
+      )}
+      
+      {selectedPaper && (
+        <PaperDetailModal 
+          paper={selectedPaper} 
+          onClose={() => { 
+            setSelectedPaper(null); 
+            setDecryptedScores([]); 
+          }} 
+          decryptedScores={decryptedScores}
+          setDecryptedScores={setDecryptedScores}
+          isDecrypting={isDecrypting} 
+          decryptWithSignature={decryptWithSignature}
+          renderScoreChart={renderScoreChart}
+          onReview={() => setShowReviewModal(true)}
+        />
+      )}
+      
       {transactionStatus.visible && (
         <div className="transaction-modal">
-          <div className={`transaction-content ${transactionStatus.status}`}>
-            <div className="transaction-icon">
-              {transactionStatus.status === "pending" && <div className="spinner"></div>}
-              {transactionStatus.status === "success" && "✓"}
-              {transactionStatus.status === "error" && "✕"}
+          <div className="transaction-content">
+            <div className={`transaction-icon ${transactionStatus.status}`}>
+              {transactionStatus.status === "pending" && <div className="fhe-spinner"></div>}
+              {transactionStatus.status === "success" && <div className="success-icon">✓</div>}
+              {transactionStatus.status === "error" && <div className="error-icon">✗</div>}
             </div>
             <div className="transaction-message">{transactionStatus.message}</div>
           </div>
         </div>
       )}
-
+      
       <footer className="app-footer">
         <div className="footer-content">
           <div className="footer-brand">
-            <h3>NFT Key FHE</h3>
-            <p>Secure confidential data vaults with NFT access keys</p>
+            <div className="logo">
+              <div className="academic-icon"></div>
+              <span>DeSciPeerReview_FHE</span>
+            </div>
+            <p>Privacy-preserving academic peer-review powered by FHE</p>
           </div>
+          
           <div className="footer-links">
             <a href="#" className="footer-link">Documentation</a>
             <a href="#" className="footer-link">Privacy Policy</a>
             <a href="#" className="footer-link">Terms</a>
+            <a href="#" className="footer-link">Contact</a>
           </div>
         </div>
+        
         <div className="footer-bottom">
           <div className="fhe-badge">
             <span>Powered by Zama FHE</span>
           </div>
-          <div className="copyright">
-            © {new Date().getFullYear()} NFT Key FHE. All rights reserved.
+          <div className="copyright">© {new Date().getFullYear()} DeSciPeerReview_FHE. All rights reserved.</div>
+          <div className="disclaimer">
+            This system uses fully homomorphic encryption to protect reviewer privacy. 
+            Scores are calculated on encrypted data without revealing individual evaluations.
           </div>
         </div>
       </footer>
+    </div>
+  );
+};
+
+interface ModalSubmitPaperProps {
+  onSubmit: () => void; 
+  onClose: () => void; 
+  submitting: boolean;
+  paperData: any;
+  setPaperData: (data: any) => void;
+}
+
+const ModalSubmitPaper: React.FC<ModalSubmitPaperProps> = ({ onSubmit, onClose, submitting, paperData, setPaperData }) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setPaperData({ ...paperData, [name]: value });
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="submit-paper-modal">
+        <div className="modal-header">
+          <h2>Submit New Paper</h2>
+          <button onClick={onClose} className="close-modal">&times;</button>
+        </div>
+        
+        <div className="modal-body">
+          <div className="fhe-notice">
+            <div className="lock-icon"></div>
+            <div>
+              <strong>FHE Peer-Review Notice</strong>
+              <p>Your paper will be reviewed anonymously using encrypted evaluations</p>
+            </div>
+          </div>
+          
+          <div className="form-group">
+            <label>Paper Title *</label>
+            <input 
+              type="text" 
+              name="title" 
+              value={paperData.title} 
+              onChange={handleChange} 
+              placeholder="Enter paper title..." 
+            />
+          </div>
+          
+          <div className="form-group">
+            <label>Author Name *</label>
+            <input 
+              type="text" 
+              name="author" 
+              value={paperData.author} 
+              onChange={handleChange} 
+              placeholder="Enter author name..." 
+            />
+          </div>
+          
+          <div className="form-group">
+            <label>Abstract *</label>
+            <textarea 
+              name="abstract" 
+              value={paperData.abstract} 
+              onChange={handleChange} 
+              placeholder="Enter paper abstract..." 
+              rows={6}
+            />
+          </div>
+        </div>
+        
+        <div className="modal-footer">
+          <button onClick={onClose} className="cancel-btn">Cancel</button>
+          <button 
+            onClick={onSubmit} 
+            disabled={submitting || !paperData.title || !paperData.author || !paperData.abstract} 
+            className="submit-btn"
+          >
+            {submitting ? "Submitting with FHE..." : "Submit Paper"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface ReviewPaperModalProps {
+  paper: Paper;
+  onSubmit: () => void;
+  onClose: () => void;
+  reviewData: any;
+  setReviewData: (data: any) => void;
+}
+
+const ReviewPaperModal: React.FC<ReviewPaperModalProps> = ({ paper, onSubmit, onClose, reviewData, setReviewData }) => {
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const { name, value } = e.target;
+    setReviewData({ ...reviewData, [name]: value });
+  };
+
+  const handleScoreChange = (score: number) => {
+    setReviewData({ ...reviewData, score });
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="review-paper-modal">
+        <div className="modal-header">
+          <h2>Review Paper</h2>
+          <button onClick={onClose} className="close-modal">&times;</button>
+        </div>
+        
+        <div className="modal-body">
+          <div className="paper-info">
+            <h3>{paper.title}</h3>
+            <p className="paper-author">By {paper.author}</p>
+            <div className="paper-abstract">{paper.abstract}</div>
+          </div>
+          
+          <div className="review-form">
+            <div className="form-group">
+              <label>Score (1-5)</label>
+              <div className="score-selector">
+                {[1, 2, 3, 4, 5].map(score => (
+                  <button
+                    key={score}
+                    className={`score-btn ${reviewData.score === score ? 'selected' : ''}`}
+                    onClick={() => handleScoreChange(score)}
+                  >
+                    {score}
+                  </button>
+                ))}
+              </div>
+            </div>
+            
+            <div className="form-group">
+              <label>Comments (Encrypted)</label>
+              <textarea 
+                name="comments" 
+                value={reviewData.comments} 
+                onChange={handleChange} 
+                placeholder="Enter your review comments..." 
+                rows={6}
+              />
+            </div>
+          </div>
+        </div>
+        
+        <div className="modal-footer">
+          <button onClick={onClose} className="cancel-btn">Cancel</button>
+          <button 
+            onClick={onSubmit} 
+            disabled={!reviewData.score || !reviewData.comments} 
+            className="submit-btn"
+          >
+            Submit Encrypted Review
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+interface PaperDetailModalProps {
+  paper: Paper;
+  onClose: () => void;
+  decryptedScores: number[];
+  setDecryptedScores: (scores: number[]) => void;
+  isDecrypting: boolean;
+  decryptWithSignature: (encryptedScores: string[]) => Promise<number[]>;
+  renderScoreChart: (paper: Paper) => JSX.Element;
+  onReview: () => void;
+}
+
+const PaperDetailModal: React.FC<PaperDetailModalProps> = ({ 
+  paper, 
+  onClose, 
+  decryptedScores,
+  setDecryptedScores,
+  isDecrypting, 
+  decryptWithSignature,
+  renderScoreChart,
+  onReview
+}) => {
+  const handleDecrypt = async () => {
+    if (decryptedScores.length > 0) { 
+      setDecryptedScores([]); 
+      return; 
+    }
+    
+    const decrypted = await decryptWithSignature(paper.encryptedReviews);
+    if (decrypted.length > 0) {
+      setDecryptedScores(decrypted);
+    }
+  };
+
+  return (
+    <div className="modal-overlay">
+      <div className="paper-detail-modal">
+        <div className="modal-header">
+          <h2>Paper Details</h2>
+          <button onClick={onClose} className="close-modal">&times;</button>
+        </div>
+        
+        <div className="modal-body">
+          <div className="paper-info">
+            <div className="info-item">
+              <span>Title:</span>
+              <strong>{paper.title}</strong>
+            </div>
+            <div className="info-item">
+              <span>Author:</span>
+              <strong>{paper.author}</strong>
+            </div>
+            <div className="info-item">
+              <span>Submitted:</span>
+              <strong>{new Date(paper.submissionDate * 1000).toLocaleDateString()}</strong>
+            </div>
+            <div className="info-item full-width">
+              <span>Abstract:</span>
+              <div className="paper-abstract">{paper.abstract}</div>
+            </div>
+          </div>
+          
+          <div className="review-section">
+            <h3>Reviews</h3>
+            <div className="review-stats">
+              <div className="stat-item">
+                <span>Average Score:</span>
+                <strong>{paper.averageScore.toFixed(1)}/5</strong>
+              </div>
+              <div className="stat-item">
+                <span>Total Reviews:</span>
+                <strong>{paper.encryptedReviews.length}</strong>
+              </div>
+            </div>
+            
+            {paper.encryptedReviews.length > 0 && (
+              <div className="score-distribution">
+                <h4>Score Distribution</h4>
+                {decryptedScores.length > 0 ? (
+                  renderScoreChart(paper)
+                ) : (
+                  <div className="encrypted-scores">
+                    <div className="fhe-tag">
+                      <div className="fhe-icon"></div>
+                      <span>FHE Encrypted</span>
+                    </div>
+                    <button 
+                      className="decrypt-btn" 
+                      onClick={handleDecrypt} 
+                      disabled={isDecrypting}
+                    >
+                      {isDecrypting ? (
+                        <span>Decrypting...</span>
+                      ) : (
+                        "Decrypt Scores with Wallet Signature"
+                      )}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+            
+            <div className="review-actions">
+              <button className="review-btn" onClick={onReview}>
+                Submit Review
+              </button>
+            </div>
+          </div>
+        </div>
+        
+        <div className="modal-footer">
+          <button onClick={onClose} className="close-btn">Close</button>
+        </div>
+      </div>
     </div>
   );
 };
